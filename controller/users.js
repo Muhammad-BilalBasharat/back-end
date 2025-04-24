@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import User from "../models/users.js";
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 // fetch all products
 const getUsers = async (req, res) => {
   try {
@@ -42,6 +43,7 @@ const getUser = async (req, res) => {
   }
 };
 
+//signup user
 const signupUser = async (req, res) => {
   try {
     let { name, email, password, confirmPassword } = req.body;
@@ -80,7 +82,7 @@ const signupUser = async (req, res) => {
         error: "User already exists",
       });
     }
-// Hash the password
+    // Hash the password
     bcrypt.hash(password, 10, async (err, hash) => {
       if (err) {
         console.log(err);
@@ -94,16 +96,15 @@ const signupUser = async (req, res) => {
         name,
         email,
         password: hash,
-        
-        });
-        await user.save();
-        // Send the response
-        const {password,...userWithoutPassword} = user.toObject();
-        res.status(201).json({
-          message: "User created successfully",
-          data: userWithoutPassword,
-          error: null,
-        });
+      });
+      await user.save();
+      // Send the response
+      const { password, ...userWithoutPassword } = user.toObject();
+      res.status(201).json({
+        message: "User created successfully",
+        data: userWithoutPassword,
+        error: null,
+      });
     });
   } catch (error) {
     res.status(500).json({
@@ -112,7 +113,6 @@ const signupUser = async (req, res) => {
     });
   }
 };
-
 
 //userLogin
 const userLogin = async (req, res) => {
@@ -147,12 +147,19 @@ const userLogin = async (req, res) => {
         error: "Invalid email or password",
       });
     }
+    // Generate a JWT token
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRATION,
+    });
 
     // Send the response
     const { password: _, ...userWithoutPassword } = user.toObject();
     res.status(200).json({
       message: "User logged in successfully",
-      data: userWithoutPassword,
+      data: {
+        user: userWithoutPassword,
+        token: token,
+      },
       error: null,
     });
   } catch (error) {
@@ -163,6 +170,68 @@ const userLogin = async (req, res) => {
   }
 };
 
+//change password
+const changePassword = async (req, res) => {
+  try {
+    const id = req.params.id; // Extract user ID from the decoded token
+    const { oldPassword, newPassword, confirmNewPassword } = req.body;
 
+    // Validate the request body
+    const validationError = [];
+    if (!oldPassword) validationError.push("Old Password is required");
+    if (!newPassword) validationError.push("New Password is required");
+    if (!confirmNewPassword) validationError.push("Confirm New Password is required");
+    if (newPassword !== confirmNewPassword) {
+      validationError.push("New Password and Confirm New Password do not match");
+    }
 
-export { getUsers, getUser, signupUser, userLogin };
+    if (validationError.length > 0) {
+      return res.status(400).json({
+        message: "Validation error",
+        data: null,
+        error: validationError.join(", "),
+      });
+    }
+
+    // Find the user by ID
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+        data: null,
+        error: "Invalid user ID",
+      });
+    }
+
+    // Compare the old password
+    const isOldPasswordValid = await bcrypt.compare(oldPassword, user.password);
+    if (!isOldPasswordValid) {
+      return res.status(400).json({
+        message: "Validation error",
+        data: null,
+        error: "Old password is incorrect",
+      });
+    }
+
+    // Hash the new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update the user's password
+    user.password = hashedNewPassword;
+    await user.save();
+
+    // Send the response
+    res.status(200).json({
+      message: "Password changed successfully",
+      data: null,
+      error: null,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+
+export { getUsers, getUser, signupUser, userLogin, changePassword };
